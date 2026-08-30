@@ -1,0 +1,12 @@
+{
+  "name": "netzach-navega",
+  "version": "1.0.0",
+  "description": "NETZACH Navega — Navegador PWA focado em privacidade e segurança, cookies criptografados AES-256-GCM.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
