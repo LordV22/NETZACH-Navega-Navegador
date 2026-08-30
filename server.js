@@ -86,25 +86,42 @@ function shimWith(base) {
 
 function rewriteHtml(html, baseUrl) {
     const P = (u) => '/proxy/' + btoaUnicode(new URL(u, baseUrl).toString());
-    return html
-        /* src/href/action - absolutos e relativos -> proxy */
-        .replace(/\b(src|href|action|poster)=(["'])([^"']*)\2/g, (m, a, q, u) => {
-            if (/^(data|blob|about|javascript|mailto|#):/i.test(u)) return m;
-            if (/^(https?|ftp):/i.test(u)) return `${a}=${q}/proxy/${btoaUnicode(u)}${q}`;
-            return `${a}=${q}${P(u)}${q}`;
-        })
-        /* srcset (imagens responsivas) */
-        .replace(/\bsrcset=(["'])([^"']*)\1/g, (m, q, set) => {
-            const parts = set.split(',').map(s => s.trim()).filter(Boolean).map(s => {
-                const sp = s.split(/\s+/);
-                const url = sp[0];
-                if (/^data:|^blob:/i.test(url)) return s;
-                return P(url) + ' ' + (sp[1] || '');
+
+    function rewriteAttrs(fragment) {
+        return fragment
+            /* src/href/action - absolutos e relativos -> proxy */
+            .replace(/\b(src|href|action|poster)=(["'])([^"']*)\2/g, (m, a, q, u) => {
+                if (/^(data|blob|about|javascript|mailto|#):/i.test(u)) return m;
+                if (/^(https?|ftp):/i.test(u)) return `${a}=${q}/proxy/${btoaUnicode(u)}${q}`;
+                return `${a}=${q}${P(u)}${q}`;
+            })
+            /* srcset (imagens responsivas) */
+            .replace(/\bsrcset=(["'])([^"']*)\1/g, (m, q, set) => {
+                const parts = set.split(',').map(s => s.trim()).filter(Boolean).map(s => {
+                    const sp = s.split(/\s+/);
+                    const url = sp[0];
+                    if (/^data:|^blob:/i.test(url)) return s;
+                    return P(url) + ' ' + (sp[1] || '');
+                });
+                return `srcset=${q}${parts.join(', ')}${q}`;
             });
-            return `srcset=${q}${parts.join(', ')}${q}`;
-        })
-        /* injetar shim de rede no <head> para rotear fetch/XHR pela origem real */
-        .replace(/<head([^>]*)>/i, (m, a) => `<head${a}><meta name="referrer" content="no-referrer"><script>${shimWith(baseUrl)}<\/script>`);
+    }
+
+    /* Reescrever apenas fora de blocos <script>/<style> (não corromper JS/CSS) */
+    const out = [];
+    let last = 0;
+    const re = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        out.push(rewriteAttrs(html.slice(last, m.index)));
+        out.push(m[0]);
+        last = m.index + m[0].length;
+    }
+    out.push(rewriteAttrs(html.slice(last)));
+
+    let result = out.join('');
+    result = result.replace(/<head([^>]*)>/i, (mm, a) => `<head${a}><meta name="referrer" content="no-referrer"><script>${shimWith(baseUrl)}<\/script>`);
+    return result;
 }
 
 const server = http.createServer(async (req, res) => {
