@@ -20,6 +20,7 @@ const els = {
     btnBack: $('btnBack'),
     btnFwd: $('btnFwd'),
     btnReload: $('btnReload'),
+    btnExternal: $('btnExternal'),
     btnIncognito: $('btnIncognito'),
     btnVault: $('btnVault'),
     btnLanguage: $('btnLanguage'),
@@ -108,7 +109,7 @@ function homeHtml() {
         ['💬', 'WhatsApp', 'https://web.whatsapp.com']
     ];
     const chips = shortcuts.map(([ico, name, url]) =>
-        `<a href="${url}" target="_blank" rel="noopener" class="chip"><span class="co">${ico}</span><span class="cn">${name}</span></a>`
+        `<a href="#" onclick="event.preventDefault();parent.__navigate('${url}')" class="chip"><span class="co">${ico}</span><span class="cn">${name}</span></a>`
     ).join('');
     return `<!DOCTYPE html><html lang="${getLang()}"><head><style>
         *{box-sizing:border-box}
@@ -132,7 +133,7 @@ function homeHtml() {
             <p>${t('home_online')}</p>
             <p>Pesquise ou digite o site na barra acima.</p>
             <div class="chips">${chips}</div>
-            <div class="hint">↗ Abre no navegador do aparelho · funciona com qualquer site</div>
+            <div class="hint">Toque num atalho ou digite a busca/site na barra acima · use ↗ para abrir fora do app</div>
         </div>
     </div></body></html>`;
 }
@@ -142,14 +143,30 @@ function btoaUnicode(str) {
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function navigate(raw) {
-    const value = raw.trim();
-    if (!value) return;
+function openExternal(url) {
+    const w = window.open(url, '_blank', 'noopener');
+    if (!w) {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+    }
+    els.status.textContent = t('openedExternal');
+}
+
+function normalizeUrl(raw) {
+    let value = raw.trim();
+    if (!value) return '';
     let url = value;
     if (!/^https?:\/\//i.test(url)) {
         if (url.includes('.') && !url.includes(' ')) url = 'https://' + url;
-        else url = 'https://www.bing.com/search?q=' + encodeURIComponent(url);
+        else url = 'https://search.brave.com/search?q=' + encodeURIComponent(url);
     }
+    return url;
+}
+
+function navigate(raw) {
+    const url = normalizeUrl(raw);
+    if (!url) return;
     els.urlInput.value = url;
     setSecureState(url);
     els.status.textContent = `${t('loading')}: ${url}`;
@@ -162,15 +179,11 @@ function navigate(raw) {
     if (historyStack[historyStack.length - 1] !== url) historyStack.push(url);
     historyIdx = historyStack.length - 1;
 
-    /* Abre no navegador real do dispositivo: 100% compatível com todos os
-       sites, com cookie/sessão preservados (contorna bloqueio de iframe). */
-    const w = window.open(url, '_blank', 'noopener');
-    if (!w) {
-        const a = document.createElement('a');
-        a.href = url; a.target = '_blank'; a.rel = 'noopener';
-        document.body.appendChild(a); a.click(); a.remove();
-    }
-    els.status.textContent = t('openedExternal');
+    /* Renderiza dentro do app via proxy (funciona para Google/Globo/YouTube
+       etc. contornando o bloqueio de iframe). Se falhar, o usuário tem o
+       botão "abrir no navegador" como fallback. */
+    els.frame.removeAttribute('srcdoc');
+    els.frame.src = '/proxy/' + btoaUnicode(url);
 }
 
 async function interceptSessionCookies(domain) {
@@ -320,7 +333,7 @@ function markReady() {
 
 // Eventos
 els.urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') navigate(els.urlInput.value); });
-els.btnReload.addEventListener('click', () => { els.frame.src = els.frame.src; els.status.textContent = t('loading') + '…'; });
+els.btnReload.addEventListener('click', () => { els.frame.removeAttribute('srcdoc'); els.frame.src = els.frame.src; els.status.textContent = t('loading') + '…'; });
 els.btnIncognito.addEventListener('click', toggleIncognito);
 els.btnVault.addEventListener('click', toggleVault);
 els.btnLanguage.addEventListener('click', toggleLanguage);
@@ -337,17 +350,25 @@ function goUrl(url) {
     els.urlInput.value = url;
     setSecureState(url);
     els.status.textContent = t('statusReady');
-    const w = window.open(url, '_blank', 'noopener');
-    if (!w) {
-        const a = document.createElement('a');
-        a.href = url; a.target = '_blank'; a.rel = 'noopener';
-        document.body.appendChild(a); a.click(); a.remove();
-    }
-    els.status.textContent = t('openedExternal');
+    els.frame.removeAttribute('srcdoc');
+    els.frame.src = '/proxy/' + btoaUnicode(url);
 }
 
 els.btnBack.addEventListener('click', () => { if (historyIdx > 0) { historyIdx--; goUrl(historyStack[historyIdx]); } });
 els.btnFwd.addEventListener('click', () => { if (historyIdx < historyStack.length - 1) { historyIdx++; goUrl(historyStack[historyIdx]); } });
+els.btnExternal.addEventListener('click', () => {
+    const u = els.urlInput.value;
+    if (u && /^https?:/i.test(u)) openExternal(u);
+    else showToast('⚠️ ' + t('noUrl'));
+});
+
+els.frame.addEventListener('load', () => {
+    els.status.textContent = t('statusReady');
+    const real = els.urlInput.value;
+    if (real && real !== 'about:blank' && /^https?:/i.test(real)) {
+        setSecureState(real);
+    }
+});
 
 let beforeinstall = null;
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -356,3 +377,5 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 init();
+
+window.__navigate = (u) => navigate(u || '');
