@@ -207,39 +207,40 @@ async function decryptCookieBlob(stored) {
     return decryptValue(inner, stored.domain + '::' + stored.name);
 }
 
-/* ---------- lifecycle do Service Worker ---------- */
-self.addEventListener('install', e => e.waitUntil(self.skipWaiting()));
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+/* ---------- lifecycle (Web Worker dedicado) ---------- */
+/*
+ * Este arquivo roda como um Web Worker dedicado (via `new Worker`),
+ * NUCA como Service Worker. Toda a criptografia é executada aqui,
+ * em thread separada, sem travar a interface.
+ */
 
-self.addEventListener('message', async (e) => {
+self.onmessage = (e) => {
     const { type, payload } = e.data;
+    const reply = (msg) => {
+        if (e.ports && e.ports[0]) {
+            e.ports[0].postMessage(msg);
+        } else {
+            // fallback: sem porta transferível
+        }
+    };
     switch (type) {
         case 'INIT':
-            try {
-                await initCrypto();
-                e.source.postMessage({ type: 'INIT_DONE', ok: true });
-            } catch (err) {
-                e.source.postMessage({ type: 'INIT_DONE', ok: false, error: err.message });
-            }
+            initCrypto()
+                .then(() => reply({ type: 'INIT_DONE', ok: true }))
+                .catch((err) => reply({ type: 'INIT_DONE', ok: false, error: err.message }));
             break;
         case 'ENCRYPT_COOKIE':
-            try {
-                const stored = await encryptCookieBlob(payload.value, payload.domain, payload.name);
-                e.source.postMessage({ type: 'COOKIE_ENCRYPTED', ok: true, stored });
-            } catch (err) {
-                e.source.postMessage({ type: 'COOKIE_ENCRYPTED', ok: false, error: err.message });
-            }
+            encryptCookieBlob(payload.value, payload.domain, payload.name)
+                .then((stored) => reply({ type: 'COOKIE_ENCRYPTED', ok: true, stored }))
+                .catch((err) => reply({ type: 'COOKIE_ENCRYPTED', ok: false, error: err.message }));
             break;
         case 'DECRYPT_COOKIE':
-            try {
-                const value = await decryptCookieBlob(payload.stored);
-                e.source.postMessage({ type: 'COOKIE_DECRYPTED', ok: value !== null, value, stored: payload.stored });
-            } catch (err) {
-                e.source.postMessage({ type: 'COOKIE_DECRYPTED', ok: false, error: err.message });
-            }
+            decryptCookieBlob(payload.stored)
+                .then((value) => reply({ type: 'COOKIE_DECRYPTED', ok: value !== null, value, stored: payload.stored }))
+                .catch((err) => reply({ type: 'COOKIE_DECRYPTED', ok: false, error: err.message }));
             break;
         case 'HASH':
-            e.source.postMessage({ type: 'HASH_DONE', hash: hashValue(payload.data) });
+            reply({ type: 'HASH_DONE', hash: hashValue(payload.data) });
             break;
     }
-});
+};
