@@ -21,6 +21,8 @@ const ROTATION_MS = 5 * 60 * 1000;
 let masterKey = null;
 let keySalt = null;
 let rotationTimer = null;
+let sessionFingerprint = null;
+let initPromise = null;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -55,33 +57,29 @@ function bufToB64(b) {
     return btoa(s);
 }
 
-/* ---------- Derivação de chave de verdade (PBKDF2 → HKDF) ---------- */
-async function deriveKeyMaterial(password, salt) {
-    const kb = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-        {
-            name: 'PBKDF2',
-            salt: enc.encode(salt),
-            iterations: PBKDF2_ITERATIONS,
-            hash: 'SHA-256'
-        },
-        kb,
-        { name: 'HKDF', hash: 'SHA-256' },
-        false,
-        ['deriveKey']
-    );
-}
-
+/* ---------- Derivação de chave de verdade (PBKDF2 → HKDF → AES-256) ---------- */
 async function initCrypto() {
     keySalt = randomBytes(16);
-    const base = deriveKeyMaterial(getFingerprint(), bufToHex(keySalt));
-    masterKey = await base.then(km => crypto.subtle.deriveKey(
+    sessionFingerprint = getFingerprint();
+
+    /* Passo 1 — PBKDF2: 150.000 iterações SHA-256 sobre a senha raiz */
+    const passwordKey = await crypto.subtle.importKey(
+        'raw', enc.encode(sessionFingerprint), 'PBKDF2', false, ['deriveBits']
+    );
+    const seedBits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt: enc.encode(bufToHex(keySalt)), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+        passwordKey, 256
+    );
+
+    /* Passo 2 — HKDF: extrator/expansor determinístico sobre os seed bits */
+    const hkdfBase = await crypto.subtle.importKey('raw', seedBits, 'HKDF', false, ['deriveKey']);
+    masterKey = await crypto.subtle.deriveKey(
         { name: 'HKDF', salt: enc.encode('netzach-vein'), info: enc.encode('netzach::encryption-key'), hash: 'SHA-256' },
-        km,
+        hkdfBase,
         { name: CRYPTO_ALGO, length: KEY_LENGTH },
         false,
         ['encrypt', 'decrypt']
-    ));
+    );
 
     /* Não rotacionar num SW já que a masterKey é derivada do fingerprint da sessão;
        a rotação contínua invalidaria keys antigas. */
@@ -225,7 +223,8 @@ self.onmessage = (e) => {
     };
     switch (type) {
         case 'INIT':
-            initCrypto()
+            initPromise = initCrypto();
+            initPromise
                 .then(() => reply({ type: 'INIT_DONE', ok: true }))
                 .catch((err) => reply({ type: 'INIT_DONE', ok: false, error: err.message }));
             break;
@@ -241,6 +240,28 @@ self.onmessage = (e) => {
             break;
         case 'HASH':
             reply({ type: 'HASH_DONE', hash: hashValue(payload.data) });
+            break;
+        case 'STATUS':
+            (initPromise || Promise.resolve())
+                .catch(() => {})
+                .then(() => reply({
+                    type: 'STATUS_DONE',
+                    ok: !!masterKey,
+                    crypto: {
+                        algo: CRYPTO_ALGO,
+                        keyLength: KEY_LENGTH,
+                        ivLength: IV_LENGTH,
+                        tagLength: TAG_LENGTH,
+                        kdf: 'PBKDF2→HKDF',
+                        iterations: PBKDF2_ITERATIONS,
+                        hash: 'SHA-256',
+                        aad: AAD,
+                        salt: keySalt ? bufToHex(keySalt) : null,
+                        fingerprint: sessionFingerprint || null,
+                        layers: ['xor', 'reverse', 'byte+9', 'base64', 'reverse2'],
+                        version: 'NZ-2.0-REAL'
+                    }
+                }));
             break;
     }
 };

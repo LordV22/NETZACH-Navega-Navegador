@@ -33,7 +33,9 @@ const els = {
     score: $('score'),
     status: $('status'),
     secStatus: $('secStatus'),
-    toast: $('toast')
+    toast: $('toast'),
+    cryptoFp: $('cryptoFp'),
+    cryptoSalt: $('cryptoSalt')
 };
 
 let cryptoReady = false;
@@ -62,6 +64,7 @@ function initCryptoWorker() {
         cryptoWorker.onmessage = (e) => {
             if (e.data && e.data.type === 'INIT_DONE') {
                 workerReady = !!e.data.ok;
+                loadCryptoStatus();
             }
         };
         cryptoWorker.onerror = (e) => {
@@ -126,11 +129,14 @@ function homeHtml() {
         .chip:hover{background:rgba(34,211,238,.16);border-color:rgba(34,211,238,.5);transform:translateY(-2px)}
         .co{font-size:22px;line-height:1}
         .cn{font-size:12px}
+        .tags{margin:14px 0 4px}
+        .tag{display:inline-block;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);padding:3px 9px;border-radius:12px;font-size:10px;color:#c4b5fd;margin:3px}
         .hint{margin-top:14px;color:#22d3ee;font-size:12px}
     </style></head><body><div class="wrap">
         <div class="card">
             <h1>🛡️ NETZACH Navega</h1>
             <p>${t('home_online')}</p>
+            <div class="tags"><span class="tag">🔐 AES-256-GCM</span><span class="tag">🌀 5 camadas</span><span class="tag">🔑 PBKDF2→HKDF</span><span class="tag">🔒 No-Referrer</span><span class="tag">👁️ Incógnito</span></div>
             <p>Pesquise ou digite o site na barra acima.</p>
             <div class="chips">${chips}</div>
             <div class="hint">Toque num atalho ou digite a busca/site na barra acima · use ↗ para abrir fora do app</div>
@@ -255,6 +261,27 @@ async function updateScore() {
     els.score.textContent = s + '%';
 }
 
+/* Expõe as credenciais do motor criptográfico na interface */
+async function loadCryptoStatus() {
+    if (!cryptoWorker) {
+        if (els.cryptoFp) els.cryptoFp.textContent = 'worker indisponível';
+        return;
+    }
+    const res = await sendToWorker('STATUS');
+    if (res && res.ok && res.crypto) {
+        const c = res.crypto;
+        if (els.cryptoFp) els.cryptoFp.textContent = c.fingerprint || '—';
+        if (els.cryptoSalt) els.cryptoSalt.textContent = c.salt || '—';
+        if (els.secStatus) {
+            els.secStatus.textContent = `🛡️ AES-256-GCM + KDF ${c.iterations.toLocaleString()} · camadas ${c.layers.length}`;
+            els.secStatus.title = JSON.stringify(c, null, 0).slice(0, 300);
+        }
+        log('CRYPTO', `${c.algo}/${c.keyLength} · ${c.kdf}@${c.iterations} · ${c.layers.length} camadas · v${c.version}`);
+    } else if (els.cryptoFp) {
+        els.cryptoFp.textContent = res && res.error ? res.error : 'aguardando...';
+    }
+}
+
 function toggleVault() {
     els.sidebar.classList.toggle('open');
     refreshVault();
@@ -303,7 +330,7 @@ async function init() {
     buildLangPicker();
 
     els.step.textContent = t('encrypting') + ' · AES-256-GCM';
-    els.step.style.color = 'var(--purple)';
+    els.step.style.color = 'var(--violet)';
 
     // Service Worker (offline) — separado do worker de criptografia
     if ('serviceWorker' in navigator) {
@@ -328,6 +355,7 @@ function markReady() {
     log('INFO', t('offline'));
     refreshVault();
     updateScore();
+    loadCryptoStatus();
     els.step.textContent = t('initialized');
 }
 

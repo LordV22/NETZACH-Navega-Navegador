@@ -4,7 +4,7 @@
  * Cacheia todos os arquivos do app; o motor criptográfico roda aqui.
  */
 
-const CACHE = 'netzach-v5';
+const CACHE = 'netzach-v6';
 const APP_SHELL = [
     '/',
     '/index.html',
