@@ -95,29 +95,45 @@ function showToast(msg) {
 }
 
 function homeHtml() {
+    const shortcuts = [
+        ['G', 'Google', 'https://www.google.com'],
+        ['🌍', 'Globo', 'https://www.globo.com'],
+        ['▶️', 'YouTube', 'https://www.youtube.com'],
+        ['B', 'Bing', 'https://www.bing.com'],
+        ['W', 'Wikipedia', 'https://pt.wikipedia.org'],
+        ['U', 'UOL', 'https://www.uol.com.br'],
+        ['T', 'Terra', 'https://www.terra.com.br'],
+        ['X', 'X/Twitter', 'https://x.com'],
+        ['📷', 'Instagram', 'https://www.instagram.com'],
+        ['💬', 'WhatsApp', 'https://web.whatsapp.com']
+    ];
+    const chips = shortcuts.map(([ico, name, url]) =>
+        `<a href="${url}" target="_blank" rel="noopener" class="chip"><span class="co">${ico}</span><span class="cn">${name}</span></a>`
+    ).join('');
     return `<!DOCTYPE html><html lang="${getLang()}"><head><style>
-        body{margin:0;font-family:system-ui,sans-serif;background:#05060f;color:#e8ecff;
-            display:flex;align-items:center;justify-content:center;min-height:100vh}
-        .card{background:rgba(15,18,40,.6);padding:36px;border-radius:18px;max-width:520px;text-align:center;margin:20px;border:1px solid rgba(255,255,255,.08)}
-        h1{background:linear-gradient(135deg,#22d3ee,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent;margin:12px 0}
-        p{color:#8a93b8;line-height:1.6;margin:8px 0}
-        .tags{margin:20px 0}
-        .tag{display:inline-block;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);padding:5px 12px;border-radius:14px;font-size:12px;color:#c4b5fd;margin:4px}
-        .logo{font-size:54px}
-    </style></head><body><div class="card">
-        <div class="logo">🛡️</div>
-        <h1>${t('home_brand')}</h1>
-        <p>${t('home_sub')}</p>
-        <p>${t('home_desc')}</p>
-        <div class="tags">
-            <span class="tag">🔐 AES-256-GCM</span>
-            <span class="tag">🌀 5 camadas</span>
-            <span class="tag">🔑 PBKDF2→HKDF</span>
-            <span class="tag">🔒 No-Referrer</span>
-            <span class="tag">👁️ Incógnito</span>
+        *{box-sizing:border-box}
+        body{margin:0;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#05060f,#0a0e1a);color:#e8ecff;
+            min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+        .wrap{max-width:560px;width:100%;text-align:center}
+        .card{background:rgba(15,18,40,.55);padding:28px 22px;border-radius:20px;border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(8px)}
+        h1{background:linear-gradient(135deg,#22d3ee,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent;margin:8px 0;font-size:26px}
+        p{color:#8a93b8;line-height:1.6;margin:6px 0;font-size:13px}
+        .chips{margin:20px 0 6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px}
+        .chip{display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:#e8ecff;
+            background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.3);padding:12px 6px;border-radius:14px;
+            transition:.15s}
+        .chip:hover{background:rgba(34,211,238,.16);border-color:rgba(34,211,238,.5);transform:translateY(-2px)}
+        .co{font-size:22px;line-height:1}
+        .cn{font-size:12px}
+        .hint{margin-top:14px;color:#22d3ee;font-size:12px}
+    </style></head><body><div class="wrap">
+        <div class="card">
+            <h1>🛡️ NETZACH Navega</h1>
+            <p>${t('home_online')}</p>
+            <p>Pesquise ou digite o site na barra acima.</p>
+            <div class="chips">${chips}</div>
+            <div class="hint">↗ Abre no navegador do aparelho · funciona com qualquer site</div>
         </div>
-        <p>${t('home_online')}</p>
-        <p style="color:#22d3ee">${t('home_go')}</p>
     </div></body></html>`;
 }
 
@@ -136,12 +152,25 @@ function navigate(raw) {
     }
     els.urlInput.value = url;
     setSecureState(url);
-    els.frame.src = '/proxy/' + btoaUnicode(url);
     els.status.textContent = `${t('loading')}: ${url}`;
     log('NAVIGATE', url);
 
     try { lastDomain = new URL(url).hostname; } catch (e) { lastDomain = null; }
     if (lastDomain && !isIncognito) interceptSessionCookies(lastDomain);
+
+    historyStack = historyStack.slice(0, historyIdx + 1);
+    if (historyStack[historyStack.length - 1] !== url) historyStack.push(url);
+    historyIdx = historyStack.length - 1;
+
+    /* Abre no navegador real do dispositivo: 100% compatível com todos os
+       sites, com cookie/sessão preservados (contorna bloqueio de iframe). */
+    const w = window.open(url, '_blank', 'noopener');
+    if (!w) {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+    }
+    els.status.textContent = t('openedExternal');
 }
 
 async function interceptSessionCookies(domain) {
@@ -305,25 +334,20 @@ els.btnClear.addEventListener('click', async () => {
 });
 
 function goUrl(url) {
-    els.frame.src = '/proxy/' + btoaUnicode(url);
     els.urlInput.value = url;
     setSecureState(url);
     els.status.textContent = t('statusReady');
+    const w = window.open(url, '_blank', 'noopener');
+    if (!w) {
+        const a = document.createElement('a');
+        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+    }
+    els.status.textContent = t('openedExternal');
 }
 
 els.btnBack.addEventListener('click', () => { if (historyIdx > 0) { historyIdx--; goUrl(historyStack[historyIdx]); } });
 els.btnFwd.addEventListener('click', () => { if (historyIdx < historyStack.length - 1) { historyIdx++; goUrl(historyStack[historyIdx]); } });
-els.frame.addEventListener('load', () => {
-    els.status.textContent = t('statusReady');
-    const real = els.urlInput.value;
-    if (real && real !== 'about:blank' && /^https?:/i.test(real)) {
-        historyStack = historyStack.slice(0, historyIdx + 1);
-        const last = historyStack[historyStack.length - 1];
-        if (last !== real) historyStack.push(real);
-        historyIdx = historyStack.length - 1;
-        setSecureState(real);
-    }
-});
 
 let beforeinstall = null;
 window.addEventListener('beforeinstallprompt', (e) => {
